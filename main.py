@@ -6,9 +6,16 @@ from aiogram.types import ReplyKeyboardRemove, \
     ReplyKeyboardMarkup, KeyboardButton, \
     InlineKeyboardMarkup, InlineKeyboardButton
 
+from enum import Enum
 
 from config import *
 from product import getData, ProductCategorySpecification, BetterFilter
+
+
+class Page(Enum):
+    Categories = 1
+    CategoryProducts = 2
+    Product = 3
 
 
 bot = Bot(token=TOKEN)
@@ -26,6 +33,9 @@ categoryMarkup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1).add(cate
 
 allMessageIdDict = dict()
 
+currentPage = Page.Categories
+currentId = int()
+
 
 # region Описание команд бота
 commandsDescription = {
@@ -34,6 +44,8 @@ commandsDescription = {
     BACK: "вернутся назад(доступно при переходе из категорий в товары и тд.",
     HELP: "вывести список команд"
 }
+
+
 # endregion
 
 
@@ -43,6 +55,8 @@ async def process_start_command(msg: types.Message):
     addChatIdInMessageDict(msg)
     await msg.reply(f"Для просмотра списка категорий нажмите кнопку '{CATEGORIES_BUTTON}' или отправьте /{CATEGORIES}\n"
                     f"Для просмотра списка команд отправьте /{HELP}", reply_markup=categoryMarkup)
+
+
 # endregion
 
 
@@ -54,6 +68,8 @@ async def process_help_command(msg: types.Message):
     for command, decriptionText in commandsDescription.items():
         helpMessage += f"/{command} - {decriptionText}\n"
     await msg.reply(helpMessage, reply_markup=categoryMarkup)
+
+
 # endregion
 
 
@@ -69,7 +85,9 @@ async def process_categories_command(msg: types.Message):
 
 
 async def process_categories(msg):
+    global currentPage
     addChatIdInMessageDict(msg)
+    currentPage = Page.Categories
     message = "Мне удалось найти для Вас следующие категории:"
 
     categoriesButtons = InlineKeyboardMarkup()
@@ -79,19 +97,34 @@ async def process_categories(msg):
         categoriesButtons.add(categoriesButton)
     t = await msg.reply(message, reply_markup=categoriesButtons)
     allMessageIdDict[t.chat.id].append(t.message_id)
+
+
 # endregion
 
 
 # region Вывод списка товаров по выбранной категории
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith(f'{CATEGORIES}_'))
 async def process_callback_categories_button(callback_query: types.CallbackQuery):
-    await deleteMessage(callback_query)
-    await bot.answer_callback_query(callback_query.id, text="Загружаем товары...")
+    await loadCategoryProducts(callback_query)
+
+
+async def loadCategoryProducts(callback_query: types.CallbackQuery = None, msg=None):
+    global currentPage, currentId
+    currentPage = Page.CategoryProducts
+    if callback_query:
+        await deleteMessage(callback_query)
+        await bot.answer_callback_query(callback_query.id, text="Загружаем товары...")
+        chat_id = callback_query.from_user.id
+        categoryIndex = int(callback_query.data.split('_')[1])
+        currentId = categoryIndex
+    else:
+        await deleteMessage(msg)
+        chat_id = msg.from_user.id
+        categoryIndex = currentId
 
     message = "Мне удалось найти для Вас следующие товары:"
-    t = await bot.send_message(callback_query.from_user.id, message)
+    t = await bot.send_message(chat_id, message)
     allMessageIdDict[t.chat.id].append(t.message_id)
-    categoryIndex = int(callback_query.data.split('_')[1])
 
     currentCategorySpec = ProductCategorySpecification(categories[categoryIndex])
     bf = BetterFilter()
@@ -103,33 +136,54 @@ async def process_callback_categories_button(callback_query: types.CallbackQuery
         productButton = InlineKeyboardButton(product.name, callback_data=f'{PRODUCTS}_{i}')
         productButtons.add(productButton)
         if i % 10 == 0:
-            t = await bot.send_message(callback_query.from_user.id, f"Страница товаров №{productsPage}",
-                                   reply_markup=productButtons)
+            t = await bot.send_message(chat_id, f"Страница товаров №{productsPage}",
+                                       reply_markup=productButtons)
             allMessageIdDict[t.chat.id].append(t.message_id)
             productButtons.clean()
             productsPage += 1
+
+
 # endregion
 
 
 # region Вывод данных о выбранном товаре
 @dp.callback_query_handler(lambda p: p.data and p.data.startswith(f'{PRODUCTS}_'))
 async def process_callback_products_button(callback_query: types.CallbackQuery):
+    global currentPage
+    currentPage = Page.Product
     await deleteMessage(callback_query)
 
     productIndex = int(callback_query.data.split('_')[1])
     product = products[productIndex]
     t = await bot.send_message(callback_query.from_user.id, product)
     allMessageIdDict[t.chat.id].append(t.message_id)
+
+
 # endregion
 
 
 # region Обработка команды /back и Назад
 @dp.message_handler(lambda message: message.text and BACK_BUTTON == message.text)
 async def echo_message(msg: types.Message):
+    global currentPage
+
     await deleteMessage(msg)
-    message = "Вы вернулись"
-    t = await msg.reply(message)
-    allMessageIdDict[t.chat.id].append(t.message_id)
+    if currentPage == Page.Product:
+        message = "Вы вернулись на страницу товаров"
+        t = await msg.reply(message)
+        allMessageIdDict[t.chat.id].append(t.message_id)
+        await loadCategoryProducts(msg=msg)
+    elif currentPage == Page.CategoryProducts:
+        message = "Вы вернулись на страницу категорий"
+        t = await msg.reply(message)
+        allMessageIdDict[t.chat.id].append(t.message_id)
+        await process_categories(msg=msg)
+    else:
+        message = "Вы долши до начала!"
+        t = await msg.reply(message)
+        allMessageIdDict[t.chat.id].append(t.message_id)
+
+
 # endregion
 
 
@@ -139,6 +193,8 @@ async def echo_message(msg: types.Message):
     message = "Команда не распознана"
     t = await msg.reply(message)
     allMessageIdDict[t.chat.id].append(t.message_id)
+
+
 # endregion
 
 
@@ -148,6 +204,8 @@ def addChatIdInMessageDict(data):
     if type(data) == types.message.Message:
         if data.chat.id not in allMessageIdDict.keys():
             allMessageIdDict[data.chat.id] = list()
+
+
 # endregion
 
 
@@ -157,11 +215,17 @@ async def deleteMessage(data):
         chat_id = data.chat.id
     else:
         chat_id = data.from_user.id
-    messageIdList = allMessageIdDict[chat_id]
-    for i in range(messageIdList[0], messageIdList[len(messageIdList)-1]+1):
-        print(i)
-        await bot.delete_message(chat_id=chat_id, message_id=i)
-    messageIdList.clear()
+    try:
+        messageIdList = allMessageIdDict[chat_id]
+    except:
+        allMessageIdDict[chat_id] = list()
+    else:
+        for i in range(messageIdList[0], messageIdList[len(messageIdList) - 1] + 1):
+            print(i)
+            await bot.delete_message(chat_id=chat_id, message_id=i)
+        messageIdList.clear()
+
+
 # endregion
 
 
