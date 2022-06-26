@@ -1,5 +1,6 @@
 # Created by Sazhod at 23.06.2022
 import csv
+from config import PRODUCTS, CATEGORIES, BRANDS, STATUSES
 
 
 class Base:
@@ -99,10 +100,10 @@ def getData(path):
                 )
             )
         return {
-            'products': productList,
-            'brands': brandsList,
-            'statuses': statusesList,
-            'categories': categoriesList
+            PRODUCTS: productList,
+            BRANDS: brandsList,
+            STATUSES: statusesList,
+            CATEGORIES: categoriesList
         }
 
 

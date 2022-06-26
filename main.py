@@ -6,7 +6,6 @@ from aiogram.types import ReplyKeyboardRemove, \
     ReplyKeyboardMarkup, KeyboardButton, \
     InlineKeyboardMarkup, InlineKeyboardButton
 
-import csv
 
 from config import *
 from product import getData, ProductCategorySpecification, BetterFilter
@@ -21,12 +20,19 @@ brands = list()
 statuses = list()
 categories = list()
 
+categoryButton = KeyboardButton(CATEGORIES_BUTTON)
+backButton = KeyboardButton(BACK_BUTTON)
+categoryMarkup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1).add(categoryButton).add(backButton)
+
+allMessageIdDict = dict()
+
 
 # region Описание команд бота
 commandsDescription = {
     START: "начать общение с ботом",
     CATEGORIES: "вывести список категорий",
-    'help': "вывести список команд"
+    BACK: "вернутся назад(доступно при переходе из категорий в товары и тд.",
+    HELP: "вывести список команд"
 }
 # endregion
 
@@ -34,22 +40,20 @@ commandsDescription = {
 # region Обработка команды /start
 @dp.message_handler(commands=[START])
 async def process_start_command(msg: types.Message):
-
-    categoryButton = KeyboardButton(CATEGORIES_BUTTON)
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1).add(categoryButton)
-
-    await msg.reply("Для просмотра списка категорий нажмите кнопку 'Категории' или отправьте /categories\n"
-                    "Для просмотра списка команд отправьте /help", reply_markup=markup)
+    addChatIdInMessageDict(msg)
+    await msg.reply(f"Для просмотра списка категорий нажмите кнопку '{CATEGORIES_BUTTON}' или отправьте /{CATEGORIES}\n"
+                    f"Для просмотра списка команд отправьте /{HELP}", reply_markup=categoryMarkup)
 # endregion
 
 
 # region Обработка команды /help
-@dp.message_handler(commands=['help'])
+@dp.message_handler(commands=[HELP])
 async def process_help_command(msg: types.Message):
+    addChatIdInMessageDict(msg)
     helpMessage = str()
     for command, decriptionText in commandsDescription.items():
         helpMessage += f"/{command} - {decriptionText}\n"
-    await msg.reply(helpMessage)
+    await msg.reply(helpMessage, reply_markup=categoryMarkup)
 # endregion
 
 
@@ -65,31 +69,28 @@ async def process_categories_command(msg: types.Message):
 
 
 async def process_categories(msg):
+    addChatIdInMessageDict(msg)
     message = "Мне удалось найти для Вас следующие категории:"
 
-    categoryButtons = InlineKeyboardMarkup()
+    categoriesButtons = InlineKeyboardMarkup()
 
     for i, category in enumerate(categories):
-        categoryButton = InlineKeyboardButton(category.name, callback_data=f'{CATEGORIES}_{i}')
-        categoryButtons.add(categoryButton)
-    await msg.reply(message, reply_markup=categoryButtons)
+        categoriesButton = InlineKeyboardButton(category.name, callback_data=f'{CATEGORIES}_{i}')
+        categoriesButtons.add(categoriesButton)
+    t = await msg.reply(message, reply_markup=categoriesButtons)
+    allMessageIdDict[t.chat.id].append(t.message_id)
 # endregion
 
 
 # region Вывод списка товаров по выбранной категории
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith(f'{CATEGORIES}_'))
 async def process_callback_categories_button(callback_query: types.CallbackQuery):
-    """
-    Отправка кнопок с товарами по выбранной категории
-    :param callback_query:
-    :return:
-    """
-    await bot.delete_message(chat_id=callback_query.from_user.id, message_id=callback_query.message.message_id)
+    await deleteMessage(callback_query)
     await bot.answer_callback_query(callback_query.id, text="Загружаем товары...")
 
     message = "Мне удалось найти для Вас следующие товары:"
-    await bot.send_message(callback_query.from_user.id, message)
-
+    t = await bot.send_message(callback_query.from_user.id, message)
+    allMessageIdDict[t.chat.id].append(t.message_id)
     categoryIndex = int(callback_query.data.split('_')[1])
 
     currentCategorySpec = ProductCategorySpecification(categories[categoryIndex])
@@ -102,20 +103,33 @@ async def process_callback_categories_button(callback_query: types.CallbackQuery
         productButton = InlineKeyboardButton(product.name, callback_data=f'{PRODUCTS}_{i}')
         productButtons.add(productButton)
         if i % 10 == 0:
-            await bot.send_message(callback_query.from_user.id, f"Страница товаров №{productsPage}",
+            t = await bot.send_message(callback_query.from_user.id, f"Страница товаров №{productsPage}",
                                    reply_markup=productButtons)
+            allMessageIdDict[t.chat.id].append(t.message_id)
             productButtons.clean()
             productsPage += 1
 # endregion
 
 
 # region Вывод данных о выбранном товаре
-@dp.callback_query_handler(lambda c: c.data and c.data.startswith(f'{PRODUCTS}_'))
+@dp.callback_query_handler(lambda p: p.data and p.data.startswith(f'{PRODUCTS}_'))
 async def process_callback_products_button(callback_query: types.CallbackQuery):
+    await deleteMessage(callback_query)
 
     productIndex = int(callback_query.data.split('_')[1])
     product = products[productIndex]
-    await bot.send_message(callback_query.from_user.id, product)
+    t = await bot.send_message(callback_query.from_user.id, product)
+    allMessageIdDict[t.chat.id].append(t.message_id)
+# endregion
+
+
+# region Обработка команды /back и Назад
+@dp.message_handler(lambda message: message.text and BACK_BUTTON == message.text)
+async def echo_message(msg: types.Message):
+    await deleteMessage(msg)
+    message = "Вы вернулись"
+    t = await msg.reply(message)
+    allMessageIdDict[t.chat.id].append(t.message_id)
 # endregion
 
 
@@ -123,7 +137,31 @@ async def process_callback_products_button(callback_query: types.CallbackQuery):
 @dp.message_handler()
 async def echo_message(msg: types.Message):
     message = "Команда не распознана"
-    await msg.reply(message)
+    t = await msg.reply(message)
+    allMessageIdDict[t.chat.id].append(t.message_id)
+# endregion
+
+
+# region Добавление нового id чата в общий словарь
+def addChatIdInMessageDict(data):
+    print(type(data))
+    if type(data) == types.message.Message:
+        if data.chat.id not in allMessageIdDict.keys():
+            allMessageIdDict[data.chat.id] = list()
+# endregion
+
+
+# region Удаление всех имеющихся в словаре сообщений по chat_id
+async def deleteMessage(data):
+    if type(data) == types.message.Message:
+        chat_id = data.chat.id
+    else:
+        chat_id = data.from_user.id
+    messageIdList = allMessageIdDict[chat_id]
+    for i in range(messageIdList[0], messageIdList[len(messageIdList)-1]+1):
+        print(i)
+        await bot.delete_message(chat_id=chat_id, message_id=i)
+    messageIdList.clear()
 # endregion
 
 
@@ -132,9 +170,11 @@ def parsingData():
     global products, brands, statuses, categories
     data = getData(path)
     products = data[PRODUCTS]
-    brands = data['brands']
-    statuses = data['statuses']
+    brands = data[BRANDS]
+    statuses = data[STATUSES]
     categories = data[CATEGORIES]
+
+
 # endregion
 
 

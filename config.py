@@ -1,9 +1,18 @@
 # Created by Sazhod at 23.06.2022
 
-TOKEN = ''
+TOKEN = '5317108015:AAEiN17laVLuwBmVITE0rCaCaFpfDiDVmFQ'
 PATH = 'products.csv'
-CATEGORIES = 'categories'
-CATEGORIES_BUTTON = 'Категории'
+
 START = 'start'
+BACK = 'back'
+HELP = 'help'
+
+CATEGORIES = 'categories'
 PRODUCTS = 'products'
+STATUSES = 'statuses'
+BRANDS = 'brands'
+
+CATEGORIES_BUTTON = 'Категории'
+BACK_BUTTON = 'Назад'
+
 
